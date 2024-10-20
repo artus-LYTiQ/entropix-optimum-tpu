@@ -85,7 +85,10 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
             f"Expected all attention tensors to be 4D, but got {[att.dim() for att in outputs.attentions]}"
         
         # logits = outputs.logits[:, -1, :]  # Last token logits
-        # attention_scores = outputs.attentions[-1]  # Use the last layer’s attention
+        logits = outputs.logits
+
+        # attentions = outputs.attentions[-1]  # Use the last layer’s attention
+        attentions = outputs.attentions
         
         # Validate logits and attention score dimensions
         assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
@@ -95,7 +98,7 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         breakpoint()
 
         # DEBUG ONLY: disable entropix sampling for now
-        # next_token = sample_greedy(generated_ids, logits, attention_scores, cfg)
+        # next_token = sample_greedy(generated_ids, logits, attentions, cfg)
         next_token = sample_greedy(logits)
         
         # After sampling, check if the token dimensions match expected sizes
