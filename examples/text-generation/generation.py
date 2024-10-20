@@ -164,14 +164,12 @@ def main():
     decode_times = []
     for i in range(max_new_tokens):
         step_start = time.time()
-        logits = model(
-            next_token.clone(),
-            position_ids=pos_ids,
-            cache_position=cache_position,
-            return_dict=False,
-            use_cache=True,
-            past_key_values=past_key_values,
-        )[0]
+        next_token = decode_one_tokens(model, next_token.clone(), pos_ids, cache_position, past_key_values)
+        cache_position += 1
+        generated_ids[:, cache_position] = next_token
+        pos_ids += 1
+        xm.mark_step()
+        step_end = time.time()
         
         # Log probabilities before sampling
         # log_token_probabilities(tokenizer, logits, next_token.item())
