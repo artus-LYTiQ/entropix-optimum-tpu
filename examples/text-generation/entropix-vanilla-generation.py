@@ -78,17 +78,20 @@ def setup_model_and_tokenizer(model_id: str, torch_dtype: torch.dtype, device: t
 
 def prepare_inputs(tokenizer, prompts: List[str], device: torch.device, max_length: int):
     logger.info("Preparing inputs...")
-    inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", truncation=True, max_length=max_length).to(device)
+    inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", truncation=True, max_length=max_length)
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    
     batch_size, sequence_length = inputs["input_ids"].shape
     logger.info(f"Input prepared with batch_size={batch_size}, sequence_length={sequence_length}")
     
-    # Add these debug lines
-    for i, ids in enumerate(inputs["input_ids"]):
-        logger.info(f"Input {i}: {tokenizer.decode(ids)}")
-        logger.info(f"Last token of input {i}: {tokenizer.decode([ids[-1]])}")
-    
     assert batch_size > 0, f"Batch size must be greater than 0, got {batch_size}"
     assert sequence_length > 0, f"Sequence length must be greater than 0, got {sequence_length}"
+    
+    for i, (ids, mask) in enumerate(zip(inputs["input_ids"], inputs["attention_mask"])):
+        actual_length = mask.sum().item()
+        logger.info(f"Input {i}: {tokenizer.decode(ids[:actual_length])}")
+        logger.info(f"Last token of input {i}: {tokenizer.decode([ids[actual_length-1]])}")
+    
     return inputs, batch_size, sequence_length
 
 def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerConfig):
@@ -96,10 +99,6 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
     batch_size, sequence_length = inputs["input_ids"].shape
     device = model.device
     
-    # Assertions with inferred checks
-    assert batch_size > 0, f"Batch size must be positive, but got {batch_size}"
-    assert sequence_length > 0, f"Sequence length must be positive, but got {sequence_length}"
-
     generated_ids = inputs["input_ids"].clone().to(device)
     attention_mask = inputs["attention_mask"].clone().to(device)
     
@@ -108,47 +107,45 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
     assert generated_ids.shape == attention_mask.shape, \
         f"generated_ids and attention_mask shapes must match, but got {generated_ids.shape} vs {attention_mask.shape}"
     
+    # Find the actual end of the input (last non-padding token)
+    input_lengths = attention_mask.sum(dim=1)
+    max_input_length = input_lengths.max().item()
+    
     for i in range(max_new_tokens):
-        outputs = model(input_ids=generated_ids, attention_mask=attention_mask, return_dict=True, output_attentions=True)
+        # Use only the non-padded part of the input
+        active_generated_ids = generated_ids[:, :max_input_length + i]
+        active_attention_mask = attention_mask[:, :max_input_length + i]
+        
+        outputs = model(input_ids=active_generated_ids, 
+                        attention_mask=active_attention_mask, 
+                        return_dict=True, 
+                        output_attentions=True)
         
         assert outputs.logits.dim() == 3, f"Expected 3D logits, but got {outputs.logits.dim()}D. logits.shape={outputs.logits.shape}"
         assert len(outputs.attentions) > 0, "Expected non-empty attention outputs"
         assert all(att.dim() == 4 for att in outputs.attentions), \
             f"Expected all attention tensors to be 4D, but got {[att.dim() for att in outputs.attentions]}"
         
-        # logits = outputs.logits[:, -1, :]  # Last token logits
         logits = outputs.logits
-
-        # attentions = outputs.attentions[-1]  # Use the last layer’s attention
         attentions = outputs.attentions
         
-        # Validate logits and attention score dimensions
-        assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
-        assert logits.shape[2] == model.config.vocab_size, \
-            f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
-        
-        current_token = generated_ids[0, -1].item()
-        logger.info(f"Before first generation step, last token: {tokenizer.decode([current_token])}")
+        current_token = active_generated_ids[0, -1].item()
+        logger.info(f"Current token: {tokenizer.decode([current_token])}")
         log_token_probabilities(tokenizer, logits, current_token)
 
-        # DEBUG ONLY: disable entropix sampling for now
-        # next_token = sample(generated_ids, logits, attentions, cfg)
         next_token = sample_greedy(logits)
         
-        # After sampling, check if the token dimensions match expected sizes
         assert next_token.dim() == 2, f"Expected 2D tensor for next_token, but got {next_token.dim()}D"
         assert next_token.shape[1] == 1, f"Expected next_token to have shape (batch_size, 1), but got {next_token.shape}"
-
-        # Update tensors with new token
-        generated_ids = torch.cat([generated_ids, next_token], dim=-1).to(device)
-        attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1).to(device)
         
-        # Ensure consistency after update
+        # Append the new token
+        generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+        attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1)
+        
         assert generated_ids.shape[1] == attention_mask.shape[1], \
             f"Mismatch after update: generated_ids {generated_ids.shape} vs attention_mask {attention_mask.shape}"
         
-        # if (i + 1) % 5 == 0:  # Sync every 5 tokens
-        #    xm.mark_step()
+        max_input_length += 1
     
     logger.info("Text generation completed")
     return generated_ids
