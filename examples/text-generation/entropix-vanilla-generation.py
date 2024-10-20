@@ -39,6 +39,8 @@ def prepare_inputs(tokenizer, prompts: List[str], device: torch.device, max_leng
     inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", truncation=True, max_length=max_length).to(device)
     batch_size, sequence_length = inputs["input_ids"].shape
     logger.info(f"Input prepared with batch_size={batch_size}, sequence_length={sequence_length}")
+    assert batch_size > 0, f"Batch size must be greater than 0, got {batch_size}"
+    assert sequence_length > 0, f"Sequence length must be greater than 0, got {sequence_length}"
     return inputs, batch_size, sequence_length
 
 def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
@@ -46,27 +48,47 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
     batch_size, sequence_length = inputs["input_ids"].shape
     device = model.device
     
+    # Assertions with inferred checks
+    assert batch_size > 0, f"Batch size must be positive, but got {batch_size}"
+    assert sequence_length > 0, f"Sequence length must be positive, but got {sequence_length}"
+
     generated_ids = inputs["input_ids"].clone()
     attention_mask = inputs["attention_mask"].clone()
     
+    assert generated_ids.dim() == 2, f"Expected 2D tensor for generated_ids, but got {generated_ids.dim()}D"
+    assert attention_mask.dim() == 2, f"Expected 2D tensor for attention_mask, but got {attention_mask.dim()}D"
+    assert generated_ids.shape == attention_mask.shape, \
+        f"generated_ids and attention_mask shapes must match, but got {generated_ids.shape} vs {attention_mask.shape}"
+    
     for i in range(max_new_tokens):
-        logger.debug(f"Generating token {i+1}/{max_new_tokens}")
+        outputs = model(input_ids=generated_ids, attention_mask=attention_mask, return_dict=True, output_attentions=True)
         
-        outputs = model(
-            input_ids=generated_ids,
-            attention_mask=attention_mask,
-            return_dict=True,
-            output_attentions=True,
-        )
+        assert outputs.logits.dim() == 3, f"Expected 3D logits, but got {outputs.logits.dim()}D. logits.shape={outputs.logits.shape}"
+        assert len(outputs.attentions) > 0, "Expected non-empty attention outputs"
+        assert all(att.dim() == 4 for att in outputs.attentions), \
+            f"Expected all attention tensors to be 4D, but got {[att.dim() for att in outputs.attentions]}"
         
-        logits = outputs.logits[:, -1, :]
-        attention_scores = outputs.attentions[-1]
+        logits = outputs.logits[:, -1, :]  # Last token logits
+        attention_scores = outputs.attentions[-1]  # Use the last layer’s attention
         
+        # Validate logits and attention score dimensions
+        assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
+        assert logits.shape[1] == model.config.vocab_size, \
+            f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
+
         next_token = sample(generated_ids, logits, attention_scores, cfg)
-        xm.mark_step()
         
+        # After sampling, check if the token dimensions match expected sizes
+        assert next_token.dim() == 2, f"Expected 2D tensor for next_token, but got {next_token.dim()}D"
+        assert next_token.shape[1] == 1, f"Expected next_token to have shape (batch_size, 1), but got {next_token.shape}"
+        
+        # Update tensors with new token
         generated_ids = torch.cat([generated_ids, next_token], dim=-1)
         attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1)
+        
+        # Ensure consistency after update
+        assert generated_ids.shape[1] == attention_mask.shape[1], \
+            f"Mismatch after update: generated_ids {generated_ids.shape} vs attention_mask {attention_mask.shape}"
     
     logger.info("Text generation completed")
     return generated_ids

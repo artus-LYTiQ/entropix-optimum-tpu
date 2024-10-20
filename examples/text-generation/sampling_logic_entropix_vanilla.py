@@ -38,26 +38,33 @@ class SamplerConfig:
         self.ada_score_int = 0.6
 
 def calculate_varentropy_logsoftmax(logits: torch.Tensor, axis: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Calculate the entropy and varentropy of the probability distribution using logsoftmax."""
+    logger.debug(f"calculate_varentropy_logsoftmax input shape: {logits.shape}")
+    assert logits.dim() >= 2, f"Expected logits to have at least 2 dimensions, but got {logits.dim()}"
+    
     log_probs = torch.nn.functional.log_softmax(logits, dim=axis)
     probs = torch.exp(log_probs)
     entropy = -torch.sum(probs * log_probs, dim=axis) / LN_2  # Convert to base-2
     varentropy = torch.sum(probs * (log_probs / LN_2 + entropy.unsqueeze(-1))**2, dim=axis)
+    
+    logger.debug(f"Entropy shape: {entropy.shape}, Varentropy shape: {varentropy.shape}")
     return entropy, varentropy
 
 def calculate_metrics(logits: torch.Tensor, attention_scores: torch.Tensor) -> Dict[str, torch.Tensor]:
-    logger.debug("Calculating metrics...")
+    logger.debug(f"calculate_metrics input shapes - logits: {logits.shape}, attention_scores: {attention_scores.shape}")
+    assert logits.dim() >= 2, f"Expected logits to have at least 2 dimensions, but got {logits.dim()}"
+    assert attention_scores.dim() >= 4, f"Expected attention_scores to have at least 4 dimensions, but got {attention_scores.dim()}"
+    
     entropy, varentropy = calculate_varentropy_logsoftmax(logits)
-
+    
     attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
     attn_entropy = -torch.sum(attention_probs * torch.log2(torch.clamp(attention_probs, 1e-10, 1.0)), dim=-1)
     attn_varentropy = torch.var(attn_entropy, dim=1)
-
+    
     mean_attention = torch.mean(attention_probs, dim=1)
     agreement = torch.mean(torch.abs(attention_probs - mean_attention.unsqueeze(1)), dim=(1, 2))
-
+    
     interaction_strength = torch.mean(torch.abs(attention_scores), dim=(1, 2, 3))
-
+    
     metrics = {
         "logits_entropy": torch.mean(entropy),
         "logits_varentropy": torch.mean(varentropy),
@@ -66,29 +73,31 @@ def calculate_metrics(logits: torch.Tensor, attention_scores: torch.Tensor) -> D
         "agreement": torch.mean(agreement),
         "interaction_strength": interaction_strength
     }
+    
     logger.debug(f"Calculated metrics: {metrics}")
     return metrics
 
 def sample_top_p_top_k(logits, temperature, top_p, top_k, min_p):
-    logger.debug(f"Sampling with temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}")
+    logger.debug(f"sample_top_p_top_k input shape: {logits.shape}")
+    logger.debug(f"Sampling parameters: temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}")
     
-    # Assert that the length of logits is greater than 128,000
-    assert logits.size(-1) > 128000, f"Expected logits length to be > 128000, but got {logits.size(-1)}"
+    assert logits.dim() == 2, f"Expected logits to have 2 dimensions, but got {logits.dim()}"
+    vocab_size = logits.size(-1)
+    logger.debug(f"Vocabulary size: {vocab_size}")
     
     probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
     
-    # Apply min_p sampling
     if min_p > 0.0:
+        logger.debug("Applying min_p sampling")
         p_max = torch.max(probs, dim=-1, keepdim=True).values
         probs = torch.where(probs < (min_p * p_max), torch.zeros_like(probs), probs)
     
-    # Ensure k is not larger than the last dimension of probs
-    k = min(top_k, probs.size(-1))
+    k = min(top_k, vocab_size)
+    logger.debug(f"Effective top-k: {k}")
     
-    # Apply top-k sampling
     top_k_probs, top_k_indices = torch.topk(probs, k=k, dim=-1)
+    logger.debug(f"Top-k probs shape: {top_k_probs.shape}, indices shape: {top_k_indices.shape}")
     
-    # Apply top-p sampling
     cumulative_probs = torch.cumsum(top_k_probs, dim=-1)
     sorted_indices_to_remove = cumulative_probs > top_p
     sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
@@ -97,53 +106,61 @@ def sample_top_p_top_k(logits, temperature, top_p, top_k, min_p):
     top_k_probs[sorted_indices_to_remove] = 0.0
     top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)
     
-    # Sample from the filtered distribution
     sample_probs = torch.distributions.Categorical(top_k_probs).sample()
     sample = torch.gather(top_k_indices, -1, sample_probs.unsqueeze(-1))
     
     logger.debug(f"Sampled token: {sample.item()}")
     return sample
 
-def sample(gen_tokens: torch.Tensor, logits: torch.Tensor, attention_scores: torch.Tensor, cfg: SamplerConfig,
-           clarifying_question_token: int = 2564) -> torch.Tensor:
+def sample(gen_tokens: torch.Tensor, logits: torch.Tensor, attention_scores: torch.Tensor, cfg: SamplerConfig) -> torch.Tensor:
     logger.debug("Starting sampling process")
+    logger.debug(f"gen_tokens shape: {gen_tokens.shape}")
+    logger.debug(f"logits shape: {logits.shape}")
+    logger.debug(f"attention_scores shape: {attention_scores.shape}")
+    
+    assert gen_tokens.dim() == 2, f"Expected gen_tokens to have 2 dimensions, but got {gen_tokens.dim()}"
+    assert logits.dim() == 2, f"Expected logits to have 2 dimensions, but got {logits.dim()}"
+    assert attention_scores.dim() >= 4, f"Expected attention_scores to have at least 4 dimensions, but got {attention_scores.dim()}"
+    
     metrics = calculate_metrics(logits, attention_scores)
     ent, vent = metrics["logits_entropy"], metrics["logits_varentropy"]
     attn_ent, attn_vent = metrics["attn_entropy"], metrics["attn_varentropy"]
     agreement = metrics["agreement"]
     interaction_strength = metrics["interaction_strength"]
+    
+    logger.debug(f"Entropy: {ent.item()}, Varentropy: {vent.item()}")
+    logger.debug(f"Attention Entropy: {attn_ent.item()}, Attention Varentropy: {attn_vent.item()}")
+    logger.debug(f"Agreement: {agreement.item()}, Interaction Strength: {interaction_strength.item()}")
 
     # Low Entropy, Low Varentropy: "flowing with unspoken intent"
     if ent < cfg.low_ent_thresh and vent < cfg.low_vent_thresh:
         logger.debug("Low Entropy, Low Varentropy: Choosing argmax")
-        return torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+        return torch.argmax(logits, dim=-1, keepdim=True)
 
     # High Entropy, Low Varentropy: "treading carefully, asking clarifying questions"
     elif ent > cfg.high_ent_thresh and vent < cfg.low_vent_thresh:
         logger.debug("High Entropy, Low Varentropy: Considering clarifying question")
-        # Insert a clarifying question token if not already present
-        if not torch.isin(gen_tokens[:, -1], clarifying_question_token).any():
+        if not torch.isin(gen_tokens[:, -1], cfg.clarifying_question_token).any():
             logger.debug("Inserting clarifying question token")
-            return torch.tensor([[clarifying_question_token]], device=logits.device)
+            return torch.tensor([[cfg.clarifying_question_token]], device=logits.device)
         else:
             logger.debug("Sampling with higher temperature after clarifying question")
-            # If we've just asked a question, sample with slightly higher temperature
             temp_adj = cfg.helv_attn_ent_offset + cfg.helv_attn_ent_coef * attn_ent
-            return sample_top_p_top_k(logits[:, -1], min(1.5, cfg.temp * temp_adj), cfg.top_p, cfg.top_k, cfg.min_p)
+            return sample_top_p_top_k(logits, min(1.5, cfg.temp * temp_adj), cfg.top_p, cfg.top_k, cfg.min_p)
 
     # Low Entropy, High Varentropy: "exploring forks in the path"
     elif ent < cfg.high_ent_thresh and vent > cfg.high_vent_thresh:
         logger.debug("Low Entropy, High Varentropy: Exploring forks")
         temp_adj = cfg.lehv_interaction_strength_offset + cfg.lehv_interaction_strength_coef * interaction_strength
         top_k_adj = max(5, int(cfg.top_k * (1 + 0.5 * (1 - agreement))))
-        return sample_top_p_top_k(logits[:, -1], min(1.5, cfg.temp * temp_adj), cfg.top_p, top_k_adj, cfg.min_p)
+        return sample_top_p_top_k(logits, min(1.5, cfg.temp * temp_adj), cfg.top_p, top_k_adj, cfg.min_p)
 
     # High Entropy, High Varentropy: "resampling in the mist"
     elif ent > cfg.med_ent_thresh and vent > cfg.high_vent_thresh:
         logger.debug("High Entropy, High Varentropy: Resampling in the mist")
         temp_adj = cfg.hehv_attn_vent_offset + cfg.hehv_attn_vent_coef * attn_vent
         top_p_adj = max(0.5, cfg.top_p - cfg.hehv_attn_ent_coef * attn_ent)
-        return sample_top_p_top_k(logits[:, -1], max(2.0, cfg.temp * temp_adj), top_p_adj, cfg.top_k, cfg.min_p)
+        return sample_top_p_top_k(logits, max(2.0, cfg.temp * temp_adj), top_p_adj, cfg.top_k, cfg.min_p)
 
     # Middle ground: use adaptive sampling
     else:
@@ -160,13 +177,15 @@ def sample(gen_tokens: torch.Tensor, logits: torch.Tensor, attention_scores: tor
         ))
         min_p = torch.clamp(cfg.min_p * (1 - cfg.ada_min_p * logits_uncertainty), 0.01, 0.5)
 
+        logger.debug(f"Adaptive sampling parameters: temperature={temperature.item()}, top_p={top_p.item()}, top_k={top_k}, min_p={min_p.item()}")
+
         samples = []
         for _ in range(cfg.n_adaptive_samples):
-            sample = sample_top_p_top_k(logits[:, -1], temperature, top_p, top_k, min_p)
+            sample = sample_top_p_top_k(logits, temperature, top_p, top_k, min_p)
             samples.append(sample)
 
         def score_sample(sample):
-            log_prob = torch.sum(torch.nn.functional.log_softmax(logits[:, -1], dim=-1) * torch.nn.functional.one_hot(sample, logits.shape[-1]))
+            log_prob = torch.sum(torch.nn.functional.log_softmax(logits, dim=-1) * torch.nn.functional.one_hot(sample, logits.shape[-1]))
             confidence_score = (
                 (1 - metrics["logits_entropy"]) * cfg.ada_score_logits_ent +
                 (1 - metrics["attn_entropy"]) * cfg.ada_score_attn_ent +
