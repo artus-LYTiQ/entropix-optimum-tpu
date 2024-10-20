@@ -21,6 +21,15 @@ logger.remove()
 logger.add(sys.stderr, format="{time} {level} {message}", level="INFO")
 logger.add("generation_log.log", rotation="500 MB", level="INFO")
 
+
+
+def sample_greedy(logits):
+    next_logits = logits[:, -1]
+    next_token_id = torch.argmax(next_logits, dim=-1)[:, None].int()
+    return next_token_id
+
+
+
 def setup_model_and_tokenizer(model_id: str, torch_dtype: torch.dtype, device: torch.device):
     logger.info(f"Loading model {model_id}...")
     model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch_dtype)
@@ -76,7 +85,9 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert logits.shape[1] == model.config.vocab_size, \
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
 
-        next_token = sample(generated_ids, logits, attention_scores, cfg)
+        # DEBUG ONLY: disable entropix sampling for now
+        # next_token = sample_greedy(generated_ids, logits, attention_scores, cfg)
+        next_token = sample_greedy(logits)
         
         # After sampling, check if the token dimensions match expected sizes
         assert next_token.dim() == 2, f"Expected 2D tensor for next_token, but got {next_token.dim()}D"
