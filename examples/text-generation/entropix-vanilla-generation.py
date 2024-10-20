@@ -84,12 +84,12 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert all(att.dim() == 4 for att in outputs.attentions), \
             f"Expected all attention tensors to be 4D, but got {[att.dim() for att in outputs.attentions]}"
         
-        logits = outputs.logits[:, -1, :]  # Last token logits
-        attention_scores = outputs.attentions[-1]  # Use the last layer’s attention
+        # logits = outputs.logits[:, -1, :]  # Last token logits
+        # attention_scores = outputs.attentions[-1]  # Use the last layer’s attention
         
         # Validate logits and attention score dimensions
         assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
-        assert logits.shape[1] == model.config.vocab_size, \
+        assert logits.shape[2] == model.config.vocab_size, \
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
         
         breakpoint()
