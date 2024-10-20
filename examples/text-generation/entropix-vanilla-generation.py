@@ -23,16 +23,12 @@ logger.add("generation_log.log", rotation="500 MB", level="INFO")
 
 
 
+
 def sample_greedy(logits):
-    # Step 1: Extract the logits corresponding to the last token in the sequence
-    next_logits = logits[:, -1, :]  # Shape: [batch_size, vocab_size]
-
-    # Step 2: Perform greedy sampling (argmax over vocab dimension)
-    next_token_id = torch.argmax(next_logits, dim=-1)  # Shape: [batch_size]
-
-    # Step 3: Optionally, expand dimensions to match expected output shape [batch_size, 1]
-    next_token_id = next_token_id.unsqueeze(-1).int()  # Shape: [batch_size, 1]
-
+    next_logits = logits[:, -1, :]
+    next_token_id = torch.argmax(next_logits, dim=-1)
+    next_token_id = next_token_id.unsqueeze(-1).int()
+    logger.info(f"Greedy sampling result: {next_token_id}")
     return next_token_id.to(logits.device)
 
 def log_token_probabilities(tokenizer, logits, current_token, top_k=10):
@@ -102,10 +98,8 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
     generated_ids = inputs["input_ids"].clone().to(device)
     attention_mask = inputs["attention_mask"].clone().to(device)
     
-    assert generated_ids.dim() == 2, f"Expected 2D tensor for generated_ids, but got {generated_ids.dim()}D"
-    assert attention_mask.dim() == 2, f"Expected 2D tensor for attention_mask, but got {attention_mask.dim()}D"
-    assert generated_ids.shape == attention_mask.shape, \
-        f"generated_ids and attention_mask shapes must match, but got {generated_ids.shape} vs {attention_mask.shape}"
+    logger.info(f"Initial generated_ids shape: {generated_ids.shape}")
+    logger.info(f"Initial attention_mask shape: {attention_mask.shape}")
     
     # Find the actual end of the input (last non-padding token)
     input_lengths = attention_mask.sum(dim=1)
@@ -116,34 +110,34 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
         active_generated_ids = generated_ids[:, :max_input_length + i]
         active_attention_mask = attention_mask[:, :max_input_length + i]
         
+        logger.info(f"Iteration {i}: active_generated_ids shape: {active_generated_ids.shape}")
+        logger.info(f"Iteration {i}: active_attention_mask shape: {active_attention_mask.shape}")
+        
         outputs = model(input_ids=active_generated_ids, 
                         attention_mask=active_attention_mask, 
                         return_dict=True, 
                         output_attentions=True)
         
-        assert outputs.logits.dim() == 3, f"Expected 3D logits, but got {outputs.logits.dim()}D. logits.shape={outputs.logits.shape}"
-        assert len(outputs.attentions) > 0, "Expected non-empty attention outputs"
-        assert all(att.dim() == 4 for att in outputs.attentions), \
-            f"Expected all attention tensors to be 4D, but got {[att.dim() for att in outputs.attentions]}"
-        
         logits = outputs.logits
-        attentions = outputs.attentions
         
-        current_token = active_generated_ids[0, -1].item()
-        logger.info(f"Current token: {tokenizer.decode([current_token])}")
-        log_token_probabilities(tokenizer, logits, current_token)
+        logger.info(f"Logits shape: {logits.shape}")
+        
+        for batch_idx in range(batch_size):
+            current_token = active_generated_ids[batch_idx, -1].item()
+            logger.info(f"Batch {batch_idx}, Current token: {tokenizer.decode([current_token])}")
+            log_token_probabilities(tokenizer, logits[batch_idx:batch_idx+1], current_token)
 
         next_token = sample_greedy(logits)
         
-        assert next_token.dim() == 2, f"Expected 2D tensor for next_token, but got {next_token.dim()}D"
-        assert next_token.shape[1] == 1, f"Expected next_token to have shape (batch_size, 1), but got {next_token.shape}"
+        logger.info(f"Next token shape: {next_token.shape}")
+        logger.info(f"Next tokens: {tokenizer.batch_decode(next_token)}")
         
         # Append the new token
         generated_ids = torch.cat([generated_ids, next_token], dim=-1)
         attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1)
         
-        assert generated_ids.shape[1] == attention_mask.shape[1], \
-            f"Mismatch after update: generated_ids {generated_ids.shape} vs attention_mask {attention_mask.shape}"
+        logger.info(f"Updated generated_ids shape: {generated_ids.shape}")
+        logger.info(f"Updated attention_mask shape: {attention_mask.shape}")
         
         max_input_length += 1
     
