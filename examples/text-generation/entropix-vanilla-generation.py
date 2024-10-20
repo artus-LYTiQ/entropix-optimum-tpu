@@ -87,7 +87,10 @@ def main():
     device = torch.device(args.device)
     model, tokenizer = setup_model_and_tokenizer(args.model_id, torch.bfloat16, device)
     
-    prompts = ["Here's a funny thing:", "Once upon a time,"] * (args.batch_size // 2)
+    # Ensure we have at least one prompt, and repeat it to match the batch size
+    base_prompts = ["Here's a funny thing:", "Once upon a time,"]
+    prompts = (base_prompts * (args.batch_size // 2 + 1))[:args.batch_size]
+    
     inputs, batch_size, sequence_length = prepare_inputs(tokenizer, prompts, device, args.max_length)
     
     cfg = SamplerConfig()
