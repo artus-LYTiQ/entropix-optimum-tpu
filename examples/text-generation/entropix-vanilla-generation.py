@@ -280,7 +280,7 @@ def main():
         print(f"Generated text {i}:", text)
 
     print(f"Program run in {time.time() - prg_start} seconds. Device: {device} System: {platform.system()}")
-    
-if __name__ == "main":
+
+if __name__ == "__main__":
     with torch.no_grad():
         main()
