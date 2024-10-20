@@ -33,7 +33,7 @@ def sample_greedy(logits):
     # Step 3: Optionally, expand dimensions to match expected output shape [batch_size, 1]
     next_token_id = next_token_id.unsqueeze(-1).int()  # Shape: [batch_size, 1]
 
-    return next_token_id
+    return next_token_id.to(logits.device)
 
 
 
@@ -68,8 +68,8 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
     assert batch_size > 0, f"Batch size must be positive, but got {batch_size}"
     assert sequence_length > 0, f"Sequence length must be positive, but got {sequence_length}"
 
-    generated_ids = inputs["input_ids"].clone()
-    attention_mask = inputs["attention_mask"].clone()
+    generated_ids = inputs["input_ids"].clone().to(device)
+    attention_mask = inputs["attention_mask"].clone().to(device)
     
     assert generated_ids.dim() == 2, f"Expected 2D tensor for generated_ids, but got {generated_ids.dim()}D"
     assert attention_mask.dim() == 2, f"Expected 2D tensor for attention_mask, but got {attention_mask.dim()}D"
@@ -104,12 +104,15 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert next_token.shape[1] == 1, f"Expected next_token to have shape (batch_size, 1), but got {next_token.shape}"
         
         # Update tensors with new token
-        generated_ids = torch.cat([generated_ids, next_token], dim=-1)
-        attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1)
+        generated_ids = torch.cat([generated_ids, next_token], dim=-1).to(device)
+        attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1).to(device)
         
         # Ensure consistency after update
         assert generated_ids.shape[1] == attention_mask.shape[1], \
             f"Mismatch after update: generated_ids {generated_ids.shape} vs attention_mask {attention_mask.shape}"
+        
+        if (i + 1) % 5 == 0:  # Sync every 5 tokens
+            xm.mark_step()
     
     logger.info("Text generation completed")
     return generated_ids
