@@ -119,7 +119,7 @@ def main():
     parser.add_argument("--model_id", type=str, default="meta-llama/Llama-3.2-1B-Instruct",
                         help="Model ID (e.g.: google/gemma-2b, mistralai/Mistral-7B-v0.3)")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Number of tokens to generate")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--max_length", type=int, default=128, help="Max input sequence length")
     parser.add_argument("--device", type=str, default="xla:0", help="XLA device to use (e.g., xla:0, xla:1, xla:2, xla:3)")
     args = parser.parse_args()
@@ -153,7 +153,7 @@ def main():
     logger.info(f"Program run in {time.time() - prg_start:.2f} seconds. Device: {device} System: {platform.system()}")
     
     # Print TPU metrics
-    logger.info(f"TPU Metrics: {torch_xla.debug.metrics.metric_data()}")
+    logger.info(f"TPU Metrics: {torch_xla.debug.metrics.metrics_report()}")
 
 if __name__ == "__main__":
     main()
