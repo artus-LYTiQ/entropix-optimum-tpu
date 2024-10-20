@@ -248,38 +248,39 @@ def main():
     for i, text in enumerate(decoded_texts):
         print(i,text)
 
-cfg = SamplerConfig()
+    cfg = SamplerConfig()
 
-for i in range(max_new_tokens):
-    outputs = model(
-        input_ids=generated_ids[:, :sequence_length + i],
-        attention_mask=attention_mask,
-        position_ids=pos_ids,
-        cache_position=cache_position,
-        return_dict=True,
-        use_cache=True,
-        past_key_values=past_key_values,
-        output_attentions=True,
-    )
+    for i in range(max_new_tokens):
+        outputs = model(
+            input_ids=generated_ids[:, :sequence_length + i],
+            attention_mask=attention_mask,
+            position_ids=pos_ids,
+            cache_position=cache_position,
+            return_dict=True,
+            use_cache=True,
+            past_key_values=past_key_values,
+            output_attentions=True,
+        )
+        
+        logits = outputs.logits
+        attention_scores = outputs.attentions[-1]  # Use the last layer's attention scores
+        
+        next_token = sample(generated_ids, logits, attention_scores, cfg)
+        xm.mark_step()
+        generated_ids[:, sequence_length + i] = next_token.squeeze(-1)
+        attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=1)
+        pos_ids = torch.cat([pos_ids, (pos_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
+        cache_position = torch.tensor([sequence_length + i], device=device)
+
+    end = time.time()
+    print(f"Generation took {end - start} seconds.")
+
+    decoded_texts = tokenizer.batch_decode(generated_ids)
+    for i, text in enumerate(decoded_texts):
+        print(f"Generated text {i}:", text)
+
+    print(f"Program run in {time.time() - prg_start} seconds. Device: {device} System: {platform.system()}")
     
-    logits = outputs.logits
-    attention_scores = outputs.attentions[-1]  # Use the last layer's attention scores
-    
-    next_token = sample(generated_ids, logits, attention_scores, cfg)
-    xm.mark_step()
-    generated_ids[:, sequence_length + i] = next_token.squeeze(-1)
-    attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=1)
-    pos_ids = torch.cat([pos_ids, (pos_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
-    cache_position = torch.tensor([sequence_length + i], device=device)
-
-end = time.time()
-print(f"Generation took {end - start} seconds.")
-
-decoded_texts = tokenizer.batch_decode(generated_ids)
-for i, text in enumerate(decoded_texts):
-    print(f"Generated text {i}:", text)
-
-print(f"Program run in {time.time() - prg_start} seconds. Device: {device} System: {platform.system()}")
 if __name__ == "main":
     with torch.no_grad():
         main()
