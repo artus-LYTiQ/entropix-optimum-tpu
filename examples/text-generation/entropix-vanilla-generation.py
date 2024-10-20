@@ -81,6 +81,12 @@ def prepare_inputs(tokenizer, prompts: List[str], device: torch.device, max_leng
     inputs = tokenizer(prompts, return_tensors="pt", padding="max_length", truncation=True, max_length=max_length).to(device)
     batch_size, sequence_length = inputs["input_ids"].shape
     logger.info(f"Input prepared with batch_size={batch_size}, sequence_length={sequence_length}")
+    
+    # Add these debug lines
+    for i, ids in enumerate(inputs["input_ids"]):
+        logger.info(f"Input {i}: {tokenizer.decode(ids)}")
+        logger.info(f"Last token of input {i}: {tokenizer.decode([ids[-1]])}")
+    
     assert batch_size > 0, f"Batch size must be greater than 0, got {batch_size}"
     assert sequence_length > 0, f"Sequence length must be greater than 0, got {sequence_length}"
     return inputs, batch_size, sequence_length
@@ -122,6 +128,7 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
         
         current_token = generated_ids[0, -1].item()
+        logger.info(f"Before first generation step, last token: {tokenizer.decode([current_token])}")
         log_token_probabilities(tokenizer, logits, current_token)
 
         # DEBUG ONLY: disable entropix sampling for now
