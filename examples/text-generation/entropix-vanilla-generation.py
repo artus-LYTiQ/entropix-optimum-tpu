@@ -141,10 +141,12 @@ def main():
     
     start = time.time()
     generated_ids = generate_text(model, inputs, args.max_new_tokens, cfg)
-    # xm.mark_step()
+    generation_end = time.time()
+    xm.mark_step()
     end = time.time()
     
-    logger.info(f"Generation took {end - start:.2f} seconds")
+    logger.info(f"Generation took {generation_end - start:.2f} seconds and the TPU needed another {end - generation_end:.2f} seconds \
+                more for a total time of {end - start:.2f} seconds")
     
     decoded_texts = tokenizer.batch_decode(generated_ids)
     for i, text in enumerate(decoded_texts):
