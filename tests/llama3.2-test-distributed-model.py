@@ -33,9 +33,14 @@ def _test_distributed_model_generation(model_id, max_new_tokens=20):
     model = DistributedModel(model_id, sample_greedy)
     
     print("Generating tokens...")
-    for _ in range(max_new_tokens):
-        pos_ids = torch.arange(tokens.shape[1], device=tokens.device).unsqueeze(0)
-        next_token = model.prefill(input_ids=tokens, attention_mask=attention_mask, position_ids=pos_ids)
+    pos_ids = torch.arange(tokens.shape[1], device=tokens.device).unsqueeze(0)
+    next_token, sequence_length = model.prefill(input_ids=tokens, attention_mask=attention_mask)
+    tokens = torch.cat([tokens, next_token], dim=-1)
+    attention_mask = torch.cat([attention_mask, torch.ones_like(next_token)], dim=-1)
+    
+    for _ in range(max_new_tokens - 1):  # -1 because we've already generated one token
+        pos_ids = torch.tensor([[tokens.shape[1] - 1]], dtype=torch.long)
+        next_token = model.decode(input_ids=next_token, attention_mask=torch.ones_like(next_token), position_ids=pos_ids)
         tokens = torch.cat([tokens, next_token], dim=-1)
         attention_mask = torch.cat([attention_mask, torch.ones_like(next_token)], dim=-1)
         
@@ -52,7 +57,7 @@ def _test_distributed_model_generation(model_id, max_new_tokens=20):
 if __name__ == "__main__":
     print("Script started")
     try:
-        _test_distributed_model_generation("meta-llama/Meta-Llama-3.1-8B", max_new_tokens=200)
+        _test_distributed_model_generation("meta-llama/Llama-3.2-1B", max_new_tokens=5)
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         import traceback
