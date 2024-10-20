@@ -94,8 +94,6 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
         assert logits.shape[2] == model.config.vocab_size, \
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
-        
-        breakpoint()
 
         # DEBUG ONLY: disable entropix sampling for now
         # next_token = sample_greedy(generated_ids, logits, attentions, cfg)
