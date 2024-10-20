@@ -148,8 +148,8 @@ def main():
     )[0]
 
     # Log probabilities after prefill
-    current_token = inputs["input_ids"][:, -1]
-    log_token_probabilities(tokenizer, logits, current_token)
+    #current_token = inputs["input_ids"][:, -1]
+    #log_token_probabilities(tokenizer, logits, current_token)
     
     next_token = sample_greedy(logits)
     xm.mark_step()
@@ -174,7 +174,7 @@ def main():
         )[0]
         
         # Log probabilities before sampling
-        log_token_probabilities(tokenizer, logits, next_token.item())
+        # log_token_probabilities(tokenizer, logits, next_token.item())
         
         next_token = sample_greedy(logits)
         cache_position += 1
