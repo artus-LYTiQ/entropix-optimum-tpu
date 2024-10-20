@@ -24,8 +24,15 @@ logger.add("generation_log.log", rotation="500 MB", level="INFO")
 
 
 def sample_greedy(logits):
-    next_logits = logits[:, -1]
-    next_token_id = torch.argmax(next_logits, dim=-1)[:, None].int()
+    # Step 1: Extract the logits corresponding to the last token in the sequence
+    next_logits = logits[:, -1, :]  # Shape: [batch_size, vocab_size]
+
+    # Step 2: Perform greedy sampling (argmax over vocab dimension)
+    next_token_id = torch.argmax(next_logits, dim=-1)  # Shape: [batch_size]
+
+    # Step 3: Optionally, expand dimensions to match expected output shape [batch_size, 1]
+    next_token_id = next_token_id.unsqueeze(-1).int()  # Shape: [batch_size, 1]
+
     return next_token_id
 
 
@@ -84,6 +91,8 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
         assert logits.shape[1] == model.config.vocab_size, \
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
+        
+        breakpoint()
 
         # DEBUG ONLY: disable entropix sampling for now
         # next_token = sample_greedy(generated_ids, logits, attention_scores, cfg)
