@@ -133,6 +133,7 @@ def main():
     # Ensure we have at least one prompt, and repeat it to match the batch size
     base_prompts = ["Here's a funny thing:", "Once upon a time,"]
     prompts = (base_prompts * (args.batch_size // 2 + 1))[:args.batch_size]
+    logger.info(f"Using prompts: {prompts}")
     
     inputs, batch_size, sequence_length = prepare_inputs(tokenizer, prompts, device, args.max_length)
     
@@ -140,7 +141,7 @@ def main():
     
     start = time.time()
     generated_ids = generate_text(model, inputs, args.max_new_tokens, cfg)
-    xm.mark_step()
+    # xm.mark_step()
     end = time.time()
     
     logger.info(f"Generation took {end - start:.2f} seconds")
