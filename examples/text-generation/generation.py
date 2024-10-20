@@ -29,6 +29,33 @@ def sample_greedy(logits):
     next_token_id = torch.argmax(next_logits, dim=-1)[:, None].int()
     return next_token_id
 
+def log_token_probabilities(tokenizer, logits, current_token, top_k=10):
+    # Get the last token's logits
+    last_token_logits = logits[:, -1, :]
+    
+    # Apply softmax to convert logits to probabilities
+    probabilities = torch.nn.functional.softmax(last_token_logits, dim=-1)
+    
+    # Get top k token ids and probabilities
+    top_k_probs, top_k_indices = torch.topk(probabilities, k=top_k, dim=-1)
+    
+    # Convert to list for easier handling
+    top_k_probs = top_k_probs[0].tolist()
+    top_k_indices = top_k_indices[0].tolist()
+    
+    # Decode tokens
+    current_token_decoded = tokenizer.decode(current_token)
+    top_k_decoded = tokenizer.batch_decode(top_k_indices)
+    
+    # Prepare log message
+    log_message = f"Current token: {current_token_decoded}\n"
+    log_message += "Top 10 candidates:\n"
+    for token, prob in zip(top_k_decoded, top_k_probs):
+        log_message += f"  {token}: {prob:.4f}\n"
+    
+    # Log the message
+    logger.info(log_message)
+
 
 def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_values):
     logits = model(
@@ -119,6 +146,11 @@ def main():
         position_ids=pos_ids,
         past_key_values=past_key_values,
     )[0]
+
+    # Log probabilities after prefill
+    current_token = inputs["input_ids"][:, -1]
+    log_token_probabilities(tokenizer, logits, current_token)
+    
     next_token = sample_greedy(logits)
     xm.mark_step()
     generated_ids[:, sequence_length] = next_token[:, 0]
@@ -132,7 +164,19 @@ def main():
     decode_times = []
     for i in range(max_new_tokens):
         step_start = time.time()
-        next_token = decode_one_tokens(model, next_token.clone(), pos_ids, cache_position, past_key_values)
+        logits = model(
+            next_token.clone(),
+            position_ids=pos_ids,
+            cache_position=cache_position,
+            return_dict=False,
+            use_cache=True,
+            past_key_values=past_key_values,
+        )[0]
+        
+        # Log probabilities before sampling
+        log_token_probabilities(tokenizer, logits, next_token.item())
+        
+        next_token = sample_greedy(logits)
         cache_position += 1
         generated_ids[:, cache_position] = next_token
         pos_ids += 1

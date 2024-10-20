@@ -35,6 +35,32 @@ def sample_greedy(logits):
 
     return next_token_id.to(logits.device)
 
+def log_token_probabilities(tokenizer, logits, current_token, top_k=10):
+    # Get the last token's logits
+    last_token_logits = logits[:, -1, :]
+    
+    # Apply softmax to convert logits to probabilities
+    probabilities = torch.nn.functional.softmax(last_token_logits, dim=-1)
+    
+    # Get top k token ids and probabilities
+    top_k_probs, top_k_indices = torch.topk(probabilities, k=top_k, dim=-1)
+    
+    # Convert to list for easier handling
+    top_k_probs = top_k_probs[0].tolist()
+    top_k_indices = top_k_indices[0].tolist()
+    
+    # Decode tokens
+    current_token_decoded = tokenizer.decode(current_token)
+    top_k_decoded = tokenizer.batch_decode(top_k_indices)
+    
+    # Prepare log message
+    log_message = f"Current token: {current_token_decoded}\n"
+    log_message += "Top 10 candidates:\n"
+    for token, prob in zip(top_k_decoded, top_k_probs):
+        log_message += f"  {token}: {prob:.4f}\n"
+    
+    # Log the message
+    logger.info(log_message)
 
 
 def setup_model_and_tokenizer(model_id: str, torch_dtype: torch.dtype, device: torch.device):
@@ -59,7 +85,7 @@ def prepare_inputs(tokenizer, prompts: List[str], device: torch.device, max_leng
     assert sequence_length > 0, f"Sequence length must be greater than 0, got {sequence_length}"
     return inputs, batch_size, sequence_length
 
-def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
+def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerConfig):
     logger.info("Starting text generation...")
     batch_size, sequence_length = inputs["input_ids"].shape
     device = model.device
@@ -94,6 +120,9 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert logits.shape[0] == batch_size, f"Logits batch size mismatch: got {logits.shape[0]} instead of {batch_size}"
         assert logits.shape[2] == model.config.vocab_size, \
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
+        
+        current_token = generated_ids[0, -1].item()
+        log_token_probabilities(tokenizer, logits, current_token)
 
         # DEBUG ONLY: disable entropix sampling for now
         # next_token = sample(generated_ids, logits, attentions, cfg)
@@ -102,7 +131,7 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         # After sampling, check if the token dimensions match expected sizes
         assert next_token.dim() == 2, f"Expected 2D tensor for next_token, but got {next_token.dim()}D"
         assert next_token.shape[1] == 1, f"Expected next_token to have shape (batch_size, 1), but got {next_token.shape}"
-        
+
         # Update tensors with new token
         generated_ids = torch.cat([generated_ids, next_token], dim=-1).to(device)
         attention_mask = torch.cat([attention_mask, torch.ones((batch_size, 1), device=device)], dim=-1).to(device)
@@ -111,8 +140,8 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
         assert generated_ids.shape[1] == attention_mask.shape[1], \
             f"Mismatch after update: generated_ids {generated_ids.shape} vs attention_mask {attention_mask.shape}"
         
-        if (i + 1) % 5 == 0:  # Sync every 5 tokens
-            xm.mark_step()
+        # if (i + 1) % 5 == 0:  # Sync every 5 tokens
+        #    xm.mark_step()
     
     logger.info("Text generation completed")
     return generated_ids
@@ -143,7 +172,7 @@ def main():
     cfg = SamplerConfig()
     
     start = time.time()
-    generated_ids = generate_text(model, inputs, args.max_new_tokens, cfg)
+    generated_ids = generate_text(model, tokenizer, inputs, args.max_new_tokens, cfg)
     generation_end = time.time()
     xm.mark_step()
     end = time.time()
