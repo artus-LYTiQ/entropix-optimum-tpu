@@ -71,6 +71,10 @@ def calculate_metrics(logits: torch.Tensor, attention_scores: torch.Tensor) -> D
 
 def sample_top_p_top_k(logits, temperature, top_p, top_k, min_p):
     logger.debug(f"Sampling with temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}")
+    
+    # Assert that the length of logits is greater than 128,000
+    assert logits.size(-1) > 128000, f"Expected logits length to be > 128000, but got {logits.size(-1)}"
+    
     probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
     
     # Apply min_p sampling
@@ -78,8 +82,11 @@ def sample_top_p_top_k(logits, temperature, top_p, top_k, min_p):
         p_max = torch.max(probs, dim=-1, keepdim=True).values
         probs = torch.where(probs < (min_p * p_max), torch.zeros_like(probs), probs)
     
+    # Ensure k is not larger than the last dimension of probs
+    k = min(top_k, probs.size(-1))
+    
     # Apply top-k sampling
-    top_k_probs, top_k_indices = torch.topk(probs, k=top_k, dim=-1)
+    top_k_probs, top_k_indices = torch.topk(probs, k=k, dim=-1)
     
     # Apply top-p sampling
     cumulative_probs = torch.cumsum(top_k_probs, dim=-1)
