@@ -95,9 +95,6 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
     generated_ids = inputs["input_ids"].clone().to(device)
     attention_mask = inputs["attention_mask"].clone().to(device)
     
-    logger.info(f"Initial generated_ids shape: {generated_ids.shape}")
-    logger.info(f"Initial attention_mask shape: {attention_mask.shape}")
-    
     # Find the actual end of each input sequence (last non-padding token)
     input_lengths = attention_mask.sum(dim=1)
     
@@ -105,72 +102,45 @@ def generate_text(model, tokenizer, inputs, max_new_tokens: int, cfg: SamplerCon
     for b in range(batch_size):
         logger.info(f"Initial input batch {b}:")
         actual_length = input_lengths[b].item()
-        logger.info(f"  Actual length: {actual_length}")
         logger.info(f"  Tokens: {generated_ids[b, :actual_length].tolist()}")
         logger.info(f"  Decoded: {tokenizer.decode(generated_ids[b, :actual_length])}")
-        logger.info(f"  Attention mask: {attention_mask[b, :actual_length].tolist()}")
     
     for i in range(max_new_tokens):
-        logger.info(f"\nIteration {i}")
-        
         # Use only the non-padded part of the input plus generated tokens for each batch item
         max_current_length = input_lengths.max().item() + i
-        active_generated_ids = [ids[:length + i + 1] for ids, length in zip(generated_ids, input_lengths)]
-        active_attention_mask = [mask[:length + i + 1] for mask, length in zip(attention_mask, input_lengths)]
+        active_generated_ids = [ids[:length + i] for ids, length in zip(generated_ids, input_lengths)]
+        active_attention_mask = [mask[:length + i] for mask, length in zip(attention_mask, input_lengths)]
         
         # Pad sequences to the maximum current length
         active_generated_ids = torch.nn.utils.rnn.pad_sequence(active_generated_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
         active_attention_mask = torch.nn.utils.rnn.pad_sequence(active_attention_mask, batch_first=True, padding_value=0)
         
-        logger.info(f"Active shapes - generated_ids: {active_generated_ids.shape}, attention_mask: {active_attention_mask.shape}")
-        
-        # Log active content for each batch
-        for b in range(batch_size):
-            logger.info(f"Batch {b} active content:")
-            actual_length = (active_attention_mask[b] == 1).sum().item()
-            logger.info(f"  Tokens: {active_generated_ids[b, :actual_length].tolist()}")
-            logger.info(f"  Decoded: {tokenizer.decode(active_generated_ids[b, :actual_length])}")
-            logger.info(f"  Attention mask: {active_attention_mask[b, :actual_length].tolist()}")
-        
         outputs = model(input_ids=active_generated_ids, 
                         attention_mask=active_attention_mask, 
-                        return_dict=True, 
-                        output_attentions=True)
+                        return_dict=True)
         
         logits = outputs.logits
-        
-        logger.info(f"Logits shape: {logits.shape}")
-        
         next_token = sample_greedy(logits)
-        
-        logger.info(f"Next token shape: {next_token.shape}")
-        logger.info(f"Next tokens: {tokenizer.batch_decode(next_token)} (IDs: {next_token.tolist()})")
         
         # Append the new token to each sequence
         for b in range(batch_size):
-            current_length = input_lengths[b].item() + i + 1
+            current_length = input_lengths[b].item() + i
             generated_ids[b, current_length] = next_token[b]
             attention_mask[b, current_length] = 1
             input_lengths[b] += 1
-        
-        logger.info(f"Updated generated_ids shape: {generated_ids.shape}")
-        logger.info(f"Updated attention_mask shape: {attention_mask.shape}")
-        
-        # Log full generated content for each batch
-        for b in range(batch_size):
-            logger.info(f"Batch {b} full generated content:")
-            actual_length = input_lengths[b].item()
-            logger.info(f"  Tokens: {generated_ids[b, :actual_length].tolist()}")
-            logger.info(f"  Decoded: {tokenizer.decode(generated_ids[b, :actual_length])}")
-            logger.info(f"  Attention mask: {attention_mask[b, :actual_length].tolist()}")
-        
-        # Check for end of text token and stop generation if found for all sequences
-        if all((generated_ids[b, input_lengths[b] - 1] == tokenizer.eos_token_id).item() for b in range(batch_size)):
-            logger.info("End of text token found for all sequences. Stopping generation.")
-            break
     
     logger.info("Text generation completed")
-    return generated_ids
+    
+    # Prepare the final output
+    final_output = []
+    for b in range(batch_size):
+        sequence = generated_ids[b, :input_lengths[b]].tolist()
+        decoded = tokenizer.decode(sequence)
+        # Replace <|eot_id|> with a newline character
+        decoded = decoded.replace("<|eot_id|>", "\n")
+        final_output.append(decoded)
+    
+    return final_output
 
 def main():
     parser = argparse.ArgumentParser(description="Text generation example")
