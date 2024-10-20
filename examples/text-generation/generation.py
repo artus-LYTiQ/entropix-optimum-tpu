@@ -6,6 +6,7 @@ import os
 import platform
 import time
 from typing import List
+from loguru import logger
 
 import torch
 import torch_xla.core.xla_model as xm
@@ -13,8 +14,12 @@ from transformers import AutoTokenizer, StaticCache
 
 from optimum.tpu.modeling import AutoModelForCausalLM
 
-
 os.environ["PJRT_DEVICE"] = "TPU"
+
+# Configure logger
+logger.remove()
+logger.add(sys.stderr, format="{time} {level} {message}", level="INFO")
+logger.add("generation_log.log", rotation="500 MB", level="INFO")
 
 
 def sample_greedy(logits):
@@ -144,6 +149,9 @@ def main():
 
     end = time.time()
     print(f"Program run in {end - prg_start} seconds. Device: {device} System: {platform.system()}")
+
+    # Print TPU metrics
+    logger.info(f"TPU Metrics: {torch_xla.debug.metrics.metrics_report()}")
 
 
 if __name__ == "__main__":

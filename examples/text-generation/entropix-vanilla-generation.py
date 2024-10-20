@@ -96,7 +96,7 @@ def generate_text(model, inputs, max_new_tokens: int, cfg: SamplerConfig):
             f"Logits vocab size mismatch: got {logits.shape[1]}, expected {model.config.vocab_size}"
 
         # DEBUG ONLY: disable entropix sampling for now
-        # next_token = sample_greedy(generated_ids, logits, attentions, cfg)
+        # next_token = sample(generated_ids, logits, attentions, cfg)
         next_token = sample_greedy(logits)
         
         # After sampling, check if the token dimensions match expected sizes
